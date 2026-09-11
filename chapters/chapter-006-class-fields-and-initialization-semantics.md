@@ -2,7 +2,7 @@
 
 > **JavaScript OOP + LLD Mastery**
 >
-> This chapter goes deeper than basic class syntax and focuses on **when and where class state is created**. Public fields, private fields, static fields, computed fields, field initializers, inheritance, and constructor execution order all affect whether an object is valid, predictable, and extensible.
+> This chapter explains **when, where, and how class state comes into existence**. Public fields, private fields, static fields, computed fields, initialization order, and inheritance all affect whether an object is valid and predictable.
 >
 > **Central question:** At every point during construction, which state is guaranteed to exist?
 
@@ -10,37 +10,27 @@
 
 # 1. Learning Objectives
 
-By the end of this chapter, you should be able to:
-
 ```text
 [ ] explain public instance fields
 [ ] explain public static fields
 [ ] explain private instance fields
 [ ] explain private static fields
-[ ] explain instance field initializers
-[ ] explain static field initializers
+[ ] explain field initializers
 [ ] explain computed field names
-[ ] explain class element evaluation at a high level
-[ ] trace field initialization order
-[ ] distinguish base-class and derived-class initialization
-[ ] explain when this becomes available
-[ ] explain why super() matters to derived constructors
-[ ] reason about field initializers that reference other fields
-[ ] reason about field initializers that call methods
-[ ] explain private-field brand initialization conceptually
-[ ] distinguish instance fields from prototype methods
-[ ] distinguish static fields from instance fields
-[ ] understand how inheritance interacts with fields
+[ ] explain class evaluation at a high level
+[ ] trace base-class initialization
+[ ] trace derived-class initialization
+[ ] explain super() timing
+[ ] explain field ordering
+[ ] explain instance fields vs prototype methods
+[ ] explain static fields vs instance fields
+[ ] explain private-field brand initialization
 [ ] identify partial-initialization hazards
-[ ] identify constructor/field-ordering hazards
-[ ] reason about overriding and field initialization
+[ ] reason about initialization invariants
 [ ] compare field syntax with constructor assignment
-[ ] compare public fields with private fields
-[ ] compare field functions with prototype methods
-[ ] design reliable initialization order
-[ ] debug field initialization bugs
-[ ] implement equivalent initialization using lower-level mechanisms
-[ ] connect initialization semantics to invariants and lifecycle design
+[ ] compare prototype methods with field functions
+[ ] debug initialization-order failures
+[ ] design safe construction timelines
 ```
 
 # 2. Prerequisites
@@ -66,12 +56,14 @@ super
 
 # 3. What Is It?
 
-A class field declares state associated with an instance or the class/static side.
+A class field declares state associated with either an instance or the class/static side.
 
 ```js
 class User {
   name = "Unknown";
+  active = true;
   static category = "user";
+  #token = "private";
 }
 ```
 
@@ -80,109 +72,122 @@ Conceptually:
 ```text
 User instance
 ├── name
+├── active
+└── private state
 
 User class
 └── category
 ```
 
-Private fields use a separate language-level private state mechanism:
+Fields are different from methods:
 
-```js
-class Account {
-  #balance = 0;
-}
+```text
+field  → state
+method → behavior
 ```
 
 # 4. Why Does It Exist?
 
-Before class fields, instance state was commonly initialized in constructors:
+Constructor assignment can become repetitive:
 
 ```js
 class User {
-  constructor(name) {
-    this.name = name;
+  constructor() {
     this.active = true;
+    this.role = "user";
   }
 }
 ```
 
-Field syntax can express default state near the class definition:
+Fields make defaults visible at the class definition:
 
 ```js
 class User {
-  name = "Unknown";
   active = true;
-
-  constructor(name) {
-    this.name = name;
-  }
+  role = "user";
 }
 ```
 
-Fields also support:
+They also provide syntax for:
 
 ```text
-private state
-static state
-derived-class initialization
-declarative defaults
+public instance state
+private instance state
+public static state
+private static state
 ```
 
-But field syntax does not remove the need to understand initialization ordering.
+But fields do not remove initialization-order or lifecycle concerns.
 
 # 5. Mental Model
 
-Think of class evaluation and instance construction as two related phases.
+Think in two phases.
 
 ```text
 CLASS EVALUATION
-      │
-      ├── class methods
-      ├── static members
-      ├── private names
-      ├── computed keys
-      └── static initialization
-                │
-                ▼
-          CLASS READY
-                │
-                ▼
+       │
+       ├── methods
+       ├── private names
+       ├── static elements
+       ├── computed keys
+       └── static initialization
+                  │
+                  ▼
+             CLASS READY
+                  │
+                  ▼
         INSTANCE CONSTRUCTION
-                │
-                ├── base initialization
-                ├── instance fields
-                ├── constructor body
-                │
-                └── derived initialization
+                  │
+                  ├── base fields
+                  ├── base constructor
+                  ├── derived fields
+                  └── derived constructor body
 ```
 
-For inheritance:
+For a base class:
 
 ```text
-Base class
-   ↓
-base instance initialization
-   ↓
-base constructor
-   ↓
-derived fields
-   ↓
-derived constructor body
+instance creation
+→ instance fields
+→ constructor body
+```
+
+For a derived class:
+
+```text
+derived construction
+→ super()
+→ base construction
+→ derived instance fields
+→ derived constructor body
 ```
 
 # 6. Core Rules
 
-## Rule 1 — Instance Fields Belong to Each Instance
+## Rule 1 — Instance Fields Are Per-Instance State
 
 ```js
 class Counter {
   count = 0;
 }
+
+const a = new Counter();
+const b = new Counter();
+
+a.count = 1;
+
+console.log(a.count);
+console.log(b.count);
 ```
 
-Each instance gets its own initialized `count`.
+Prediction:
 
-## Rule 2 — Static Fields Belong to the Class Side
+```text
+1
+0
+```
+
+## Rule 2 — Static Fields Are Class-Level State
 
 ```js
 class Counter {
@@ -190,9 +195,59 @@ class Counter {
 }
 ```
 
-Access through `Counter.created`.
+Access through:
 
-## Rule 3 — Private Fields Are Not Ordinary Public Properties
+```js
+Counter.created;
+```
+
+not through:
+
+```js
+new Counter().created;
+```
+
+## Rule 3 — Public Instance Fields Are Own Properties
+
+```js
+class User {
+  name = "Milan";
+}
+
+const user = new User();
+console.log(Object.hasOwn(user, "name"));
+```
+
+Result:
+
+```text
+true
+```
+
+## Rule 4 — Prototype Methods Are Separate
+
+```js
+class User {
+  name = "Milan";
+
+  greet() {
+    return this.name;
+  }
+}
+```
+
+Model:
+
+```text
+user
+├── name
+└── [[Prototype]]
+      ↓
+User.prototype
+└── greet
+```
+
+## Rule 5 — Private Fields Are Not Ordinary Public Keys
 
 ```js
 class Account {
@@ -200,28 +255,9 @@ class Account {
 }
 ```
 
-The private name is not a string key accessible through `account["#balance"]`.
+Private names are not string keys such as `"#balance"`.
 
-## Rule 4 — Instance Fields Are Initialized During Construction
-
-A field declaration participates in class construction semantics rather than simply existing as source text.
-
-## Rule 5 — Derived Classes Have Special Initialization Rules
-
-A derived constructor must perform the superclass construction step before normal use of `this`.
-
-## Rule 6 — Field Order Matters
-
-```js
-class User {
-  first = "Milan";
-  last = `${this.first} Prusty`;
-}
-```
-
-The second initializer observes state established by the first.
-
-## Rule 7 — Field Initializers Can Execute Code
+## Rule 6 — Field Initializers Execute
 
 ```js
 class Service {
@@ -229,7 +265,15 @@ class Service {
 }
 ```
 
-The expression executes during relevant initialization and can have side effects, dependencies, cost, and failure.
+The expression executes during relevant initialization and can:
+
+```text
+throw
+allocate
+call methods
+read state
+have side effects
+```
 
 # 7. Syntax
 
@@ -261,7 +305,7 @@ class Account {
 
 ```js
 class Registry {
-  static #items = [];
+  static #items = new Map();
 }
 ```
 
@@ -269,8 +313,8 @@ class Registry {
 
 ```js
 class User {
-  #normalize(name) {
-    return name.trim();
+  #normalize(value) {
+    return value.trim();
   }
 }
 ```
@@ -278,7 +322,7 @@ class User {
 ## Computed Field Name
 
 ```js
-const key = "name";
+const key = "displayName";
 
 class User {
   [key] = "Milan";
@@ -317,13 +361,11 @@ console.log(b.count);
 **Trace**
 
 ```text
-a → own count = 0
-b → own count = 0
+a.count starts at 0
+b.count starts at 0
 
 a.increment()
-→ a.count becomes 1
-
-b.count remains 0
+→ only a.count changes
 ```
 
 ## Example 2 — Static State
@@ -354,12 +396,11 @@ console.log(Counter.created);
 ```js
 class User {
   first = "Milan";
-  full = `${this.first} Prusty`;
+  last = "Prusty";
+  full = `${this.first} ${this.last}`;
 }
 
-const user = new User();
-
-console.log(user.full);
+console.log(new User().full);
 ```
 
 **Prediction**
@@ -369,8 +410,6 @@ Milan Prusty
 ```
 
 # 9. Execution Walkthrough
-
-Consider:
 
 ```js
 class User {
@@ -385,40 +424,38 @@ class User {
 const user = new User("Milan");
 ```
 
-For a base class, reason conceptually:
+Conceptually:
 
 ```text
 1. Class definition is evaluated.
-2. Field definitions participate in class construction semantics.
+2. Class elements are established.
 3. new starts construction.
-4. Instance is created.
-5. Instance fields are initialized.
-6. Constructor body executes.
-7. Constructor overwrites name with "Milan".
-8. Final instance is returned.
+4. The instance is created.
+5. Base instance fields initialize.
+6. Constructor body runs.
+7. name changes from "Unknown" to "Milan".
+8. Construction completes.
 ```
 
 Final state:
 
 ```text
-user
-├── name → "Milan"
-└── active → true
+user.name   → "Milan"
+user.active → true
 ```
 
 # 10. Internal Mechanics
 
-A class field is an initialization step rather than a prototype method.
+A field is an initialization step; a prototype method is normally shared behavior.
 
 ```js
 class User {
   name = "Milan";
-
   greet() {}
 }
 ```
 
-Conceptually:
+Conceptual layout:
 
 ```text
 instance
@@ -428,11 +465,21 @@ User.prototype
 └── greet
 ```
 
-The field is instance state. The method is prototype-shared behavior.
+For instance fields:
+
+```text
+each instance receives its own state
+```
+
+For prototype methods:
+
+```text
+instances delegate to shared behavior
+```
 
 # 11. ECMAScript / Specification Semantics
 
-ECMAScript specifies class evaluation and construction around concepts including:
+ECMAScript defines class semantics around:
 
 ```text
 class definition evaluation
@@ -445,9 +492,15 @@ constructor evaluation
 derived construction
 ```
 
-Source-code order must be interpreted through base/derived class semantics and field initialization rules rather than treated as a simple top-to-bottom script.
+Exact behavior must be reasoned from the language specification rather than from an imagined source-to-source transform.
 
-The ECMAScript specification is authoritative for exact observable behavior.
+Important distinction:
+
+```text
+language guarantee
+≠
+engine implementation detail
+```
 
 # 12. Advanced Behavior
 
@@ -468,30 +521,7 @@ Expected:
 true
 ```
 
-## 12.2 Prototype Methods Remain Separate
-
-```js
-class User {
-  name = "Milan";
-
-  greet() {
-    return this.name;
-  }
-}
-```
-
-Layout:
-
-```text
-user
-├── name
-└── [[Prototype]]
-      ↓
-User.prototype
-└── greet
-```
-
-## 12.3 Field Initializers Can Read Earlier Fields
+## 12.2 Field Initializers Can Read Earlier Fields
 
 ```js
 class User {
@@ -501,7 +531,7 @@ class User {
 }
 ```
 
-## 12.4 Field Initializers Can Call Methods
+## 12.3 Field Initializers Can Call Methods
 
 ```js
 class User {
@@ -513,30 +543,36 @@ class User {
 }
 ```
 
-This requires careful reasoning about lookup, receiver, and possible overriding.
+This requires careful reasoning about lookup, receiver, and overriding.
+
+## 12.4 Field Initializers Can Throw
+
+```js
+class Service {
+  client = createClient();
+}
+```
+
+If `createClient()` throws, construction fails.
 
 # 13. Initialization Order
 
 ## Base Class
 
-Conceptually:
-
 ```text
-allocate instance
+create instance
 → initialize base instance fields
-→ execute base constructor body
+→ run base constructor body
 ```
 
 ## Derived Class
 
-Conceptually:
-
 ```text
 derived constructor begins
 → super(...)
-→ base construction/initialization
-→ derived instance fields initialize
-→ derived constructor body continues
+→ base construction
+→ derived instance fields
+→ derived constructor body
 ```
 
 Use the specification for exact corner cases.
@@ -585,19 +621,15 @@ Result:
 child
 ```
 
-This is state initialization/shadowing, not prototype method overriding.
+This is instance-state initialization, not prototype method overriding.
 
 # 16. Fields Are Not Virtual Methods
-
-A field:
 
 ```js
 value = 10;
 ```
 
 stores state.
-
-A method:
 
 ```js
 getValue() {
@@ -607,9 +639,9 @@ getValue() {
 
 expresses behavior.
 
-They should not be treated as interchangeable design mechanisms.
+This distinction matters for polymorphism and invariants.
 
-# 17. Constructor and Field Interactions
+# 17. Constructor and Field Interaction
 
 ```js
 class Base {
@@ -623,7 +655,7 @@ class Base {
 new Base();
 ```
 
-A base constructor can observe the initialized base field.
+A base constructor can observe its initialized base field.
 
 # 18. Derived Constructor Hazard
 
@@ -643,9 +675,7 @@ new Child();
 
 When the base constructor executes, derived fields have not completed their initialization.
 
-Core rule:
-
-> A base constructor must not assume derived instance fields already exist.
+> **A base constructor must not assume derived instance fields already exist.**
 
 # 19. Constructor Virtual Dispatch Hazard
 
@@ -655,9 +685,7 @@ class Base {
     this.initialize();
   }
 
-  initialize() {
-    return "base";
-  }
+  initialize() {}
 }
 
 class Child extends Base {
@@ -671,7 +699,7 @@ class Child extends Base {
 new Child();
 ```
 
-The base constructor invokes behavior overridden by the child before derived fields are initialized.
+The base constructor invokes child behavior before derived fields have initialized.
 
 Design rule:
 
@@ -686,31 +714,9 @@ class User {
 }
 ```
 
-The later initializer uses the instance state established by the earlier initializer.
+Later initializers can use earlier instance state.
 
-# 21. Field Initializers and Errors
-
-If:
-
-```js
-class Service {
-  client = createClient();
-}
-```
-
-and `createClient()` throws, construction fails.
-
-Therefore decide carefully whether work belongs in:
-
-```text
-field initialization
-constructor
-factory
-async initialization
-application startup
-```
-
-# 22. Private Field Initialization
+# 21. Private Field Initialization
 
 ```js
 class Account {
@@ -722,25 +728,25 @@ class Account {
 }
 ```
 
-The relevant private state is initialized during construction.
+The private state is initialized as part of the construction lifecycle.
 
-# 23. Private Brand Reasoning
+# 22. Private Brand Reasoning
 
 Useful mental model:
 
 ```text
-class private definition
-        ↓
+private declaration
+      ↓
 private name/brand
-        ↓
+      ↓
 instance initialization
-        ↓
-instance gains appropriate private state
+      ↓
+instance has compatible private state
 ```
 
-Calling a method that accesses private state with an unrelated receiver can throw.
+Wrong receivers can cause private-field access to throw.
 
-# 24. Private Fields and Inheritance
+# 23. Private Fields and Inheritance
 
 Private fields are not ordinary inherited public properties.
 
@@ -756,31 +762,9 @@ class Base {
 class Child extends Base {}
 ```
 
-Inherited behavior can access the Base private state of a compatible instance, but subclasses cannot simply access the Base private name as an ordinary property.
+Inherited behavior can use Base private state on a compatible instance, but the private name is not a normal public property available to Child.
 
-# 25. Same Private Name Syntax, Different Class
-
-Private names declared in separate class definitions are distinct even if their spelling is identical.
-
-Conceptually:
-
-```text
-Base.#value ≠ Child.#value
-```
-
-unless referring to the exact same private declaration.
-
-# 26. Static Fields and Initialization
-
-```js
-class Config {
-  static version = 1;
-}
-```
-
-The field belongs to the class/static side.
-
-# 27. Static Field Dependencies
+# 24. Static Fields and Initialization
 
 ```js
 class Config {
@@ -789,9 +773,9 @@ class Config {
 }
 ```
 
-Static initialization order matters.
+Static initialization order matters because later static initializers can depend on earlier state.
 
-# 28. Static Private State
+# 25. Static Private State
 
 ```js
 class Registry {
@@ -807,9 +791,9 @@ class Registry {
 }
 ```
 
-Because this state is class-level, it can create long-lived shared state and testing concerns.
+Treat static mutable state as shared state with lifecycle and testing implications.
 
-# 29. Computed Fields
+# 26. Computed Fields
 
 ```js
 const key = "displayName";
@@ -819,9 +803,9 @@ class User {
 }
 ```
 
-The expression producing the key participates in class evaluation and can have dependencies, side effects, or failures.
+Computed key expressions participate in class evaluation and can have dependencies or fail.
 
-# 30. Field Initializers vs Constructor Assignment
+# 27. Field Initializers vs Constructor Assignment
 
 Compare:
 
@@ -843,9 +827,9 @@ class User {
 
 They can express similar simple state, but field initialization has class-specific ordering semantics, especially with inheritance.
 
-# 31. Default State vs Derived State
+# 28. Default State vs Derived State
 
-Prefer:
+Prefer computed state when duplication would drift:
 
 ```js
 class User {
@@ -858,20 +842,9 @@ class User {
 }
 ```
 
-when duplicated mutable state would otherwise drift.
+# 29. Fields and Invariants
 
-# 32. Fields as Configuration
-
-```js
-class RetryPolicy {
-  maxRetries = 3;
-  baseDelay = 100;
-}
-```
-
-Ask whether these should instead be constructor inputs or external configuration.
-
-# 33. Fields and Invariants
+Fields declare state; constructors can establish invariants.
 
 ```js
 class Money {
@@ -883,47 +856,21 @@ class Money {
       throw new TypeError("Invalid amount");
     }
 
+    if (typeof currency !== "string" || currency.length !== 3) {
+      throw new TypeError("Invalid currency");
+    }
+
     this.amount = amount;
     this.currency = currency.toUpperCase();
   }
 }
 ```
 
-Fields can declare state while the constructor enforces domain validity.
+The object should satisfy the domain contract when construction completes.
 
-# 34. Advanced Behavior — Field Initializer Side Effects
-
-Avoid hidden expensive lifecycle work such as:
-
-```js
-class Service {
-  database = connectToDatabase();
-}
-```
-
-unless the lifecycle explicitly requires it.
-
-Prefer explicit dependencies when appropriate:
-
-```js
-class Service {
-  constructor(database) {
-    this.database = database;
-  }
-}
-```
-
-# 35. Advanced Behavior — Field Function Allocation
+# 30. Advanced Behavior — Per-Instance Functions
 
 Compare:
-
-```js
-class User {
-  greet = () => this.name;
-}
-```
-
-with:
 
 ```js
 class User {
@@ -933,158 +880,120 @@ class User {
 }
 ```
 
-The first is a per-instance function field; the second is normally a shared prototype method.
-
-# 36. Advanced Behavior — Field Function and Inheritance
+with:
 
 ```js
-class Base {
-  greet = () => "base";
-}
-
-class Child extends Base {
-  greet = () => "child";
+class User {
+  greet = () => this.name;
 }
 ```
 
-This is per-instance function state, not prototype method overriding.
+The first is normally a shared prototype method. The second stores a function per instance.
 
-# 37. Advanced Behavior — Field Ordering Within One Class
-
-```js
-class Example {
-  a = 1;
-  b = this.a + 1;
-  c = this.b + 1;
-}
-```
-
-Reordering the fields can change behavior because initializers can depend on earlier fields.
-
-# 38. Edge Cases
-
-Important edge cases include:
+Trade-off:
 
 ```text
-field reads before initialization
-derived fields before super
-private access before brand initialization
-static initialization failure
+prototype method:
++ shared function
++ traditional override model
+
+arrow field:
++ lexical this
+- per-instance function allocation
+```
+
+# 31. Edge Cases
+
+Important cases:
+
+```text
+later field referenced by earlier initializer
+derived construction before derived fields exist
+base constructor reading derived state
+private access with unrelated receiver
+static initializer throwing
 computed-key failure
 large field allocations
 field functions created per instance
-base constructor reading derived state
-constructor virtual dispatch
+constructor calling overridden behavior
 ```
 
-# 39. Edge Case — Later Field Reference
-
-```js
-class Example {
-  b = this.a + 1;
-  a = 1;
-}
-```
-
-The initializer for `b` cannot assume that the later `a` field has already been initialized.
-
-# 40. Edge Case — Derived Initialization Boundary
-
-A derived constructor cannot initialize derived instance fields before the superclass construction step makes the receiver available.
-
-# 41. Edge Case — Private Receiver
-
-```js
-class Account {
-  #balance = 100;
-
-  getBalance() {
-    return this.#balance;
-  }
-}
-
-const getBalance = new Account().getBalance;
-getBalance.call({});
-```
-
-The unrelated receiver lacks the required private state and the operation throws.
-
-# 42. Common Misconceptions
+# 32. Common Misconceptions
 
 ```text
 "All class fields live on the prototype."
-"Static fields exist on instances."
-"Private fields are ordinary hidden properties."
-"Field initializers have no ordering semantics."
+"Static fields exist on every instance."
+"Private fields are hidden string properties."
+"Field initialization has no ordering semantics."
 "Derived fields exist before super()."
-"Field functions are prototype methods."
+"Arrow-function fields are prototype methods."
 "Fields are free allocations."
 "Fields automatically enforce domain invariants."
-"Private fields are security/encryption mechanisms."
+"Private means encrypted."
 ```
 
-# 43. Common Mistakes
+# 33. Common Mistakes
 
 ```text
-[ ] depending on field ordering accidentally
-[ ] using expensive expressions in field initializers
-[ ] creating per-instance arrow functions without considering allocation
-[ ] calling overridable methods during initialization
-[ ] assuming base constructors can read derived fields
-[ ] using static mutable fields as hidden global state
-[ ] duplicating derived state unnecessarily
-[ ] using field defaults where validation is required
-[ ] hiding lifecycle work inside field initializers
+[ ] accidental field-order dependencies
+[ ] expensive work in field initializers
+[ ] unnecessary per-instance arrow functions
+[ ] base constructors assuming derived state
+[ ] constructor-time virtual dispatch
+[ ] static mutable state acting as hidden global state
+[ ] duplicated derived state
+[ ] defaults used where validation is required
+[ ] I/O hidden inside construction
 ```
 
-# 44. Comparison With Related Concepts
+# 34. Comparison With Related Concepts
 
-| Concept | Lifecycle / location |
+| Concept | Meaning |
 |---|---|
-| Instance field | Initialized per instance |
-| Static field | Initialized on class/static side |
+| Instance field | Per-instance state |
+| Static field | Class-level state |
 | Private field | Per-instance private state |
 | Static private field | Class-level private state |
 | Prototype method | Shared behavior |
 | Arrow-function field | Per-instance function value |
-| Constructor assignment | Explicit initialization logic |
+| Constructor assignment | Explicit initialization |
 | Getter | Computed access behavior |
-| Factory | Externalized object creation |
+| Factory | Externalized creation/lifecycle |
 | Static registry | Shared class-level state |
 
-# 45. Performance Considerations
+# 35. Performance Considerations
 
-Consider:
+Watch:
 
 ```text
 per-instance allocations
-field initializer complexity
-function-valued fields
-large arrays/maps
-repeated construction
-constructor + field duplicated work
+large default arrays/maps
+field functions
+expensive initializer expressions
+duplicate derived state
+static caches
 ```
 
-Per-instance arrow-function fields can allocate a function for every instance. Prototype methods normally share one function through the prototype.
+A function-valued field can allocate once per instance. A prototype method is normally shared.
 
 Profile before optimizing.
 
-# 46. Memory Considerations
+# 36. Memory Considerations
 
-Potential memory growth comes from:
+Potential memory costs:
 
 ```text
-large instance fields
+large instance graphs
 per-instance closures
 private state
-static collections
-cached computed values
-duplicated derived state
+static registries
+per-instance caches
+duplicate derived state
 ```
 
-A static collection may remain reachable for the lifetime of the class/module.
+A static collection may remain reachable for a long time.
 
-# 47. Security Considerations
+# 37. Security Considerations
 
 Public fields are public API surface.
 
@@ -1095,19 +1004,21 @@ authorization
 input validation
 secret management
 process isolation
-cryptographic protection
+cryptography
 ```
 
-# 48. Production Usage
+Static shared state can also accidentally cross request/tenant boundaries.
 
-Prefer predictable initialization:
+# 38. Production Usage
+
+Prefer:
 
 ```text
-cheap defaults
 explicit dependencies
+small/predictable initialization
 validated state
-clear lifecycle
-limited initialization side effects
+clear ownership
+limited side effects
 ```
 
 Be cautious with:
@@ -1116,11 +1027,13 @@ Be cautious with:
 database connections in fields
 network requests in fields
 large allocations in defaults
-virtual method calls during construction
-static mutable global-like registries
+virtual calls during construction
+static global-like state
 ```
 
-# 49. Implementation From Scratch
+Complex asynchronous initialization may be clearer in a factory or application lifecycle.
+
+# 39. Implementation From Scratch
 
 ## Exercise 1 — Field-to-Constructor Translation
 
@@ -1133,15 +1046,15 @@ class User {
 }
 ```
 
-into constructor assignments and document where the translation is only approximate.
+into constructor assignments and note what the translation does not capture exactly.
 
-## Exercise 2 — Field Ordering Detector
+## Exercise 2 — Field Dependency Detector
 
-Identify class fields whose initializers reference later fields.
+Identify fields whose initializers reference fields declared later.
 
-## Exercise 3 — Private State Alternative
+## Exercise 3 — Private-State Alternative
 
-Implement a closure-based equivalent of:
+Create a closure-based alternative to:
 
 ```js
 class Account {
@@ -1157,17 +1070,37 @@ class Account {
 }
 ```
 
-Compare encapsulation, memory, prototype sharing, debugging, and inheritance.
+Compare privacy, memory, prototype sharing, and inheritance.
 
 ## Exercise 4 — Static Registry
 
-Implement a class with a private static `Map` and `add`, `get`, `remove`, `clear` operations. Analyze lifetime and test coupling.
+Implement a private static `Map` with:
 
-## Exercise 5 — Safe Initialization
+```text
+add
+get
+remove
+clear
+```
 
-Design an `Order` with required constructor inputs, default fields, validated fields, derived state, and private state. Document the initialization order.
+Then analyze lifetime and test coupling.
 
-# 50. Debugging Exercises
+## Exercise 5 — Initialization-Safe Order
+
+Design an `Order` with:
+
+```text
+id
+items
+status
+createdAt
+private totals
+derived display state
+```
+
+and document the initialization order.
+
+# 40. Debugging Exercises
 
 ## Debug 1 — Field Order
 
@@ -1183,7 +1116,7 @@ console.log(new Example().full);
 
 Explain and fix it.
 
-## Debug 2 — Derived State
+## Debug 2 — Base Reads Derived State
 
 ```js
 class Base {
@@ -1199,7 +1132,7 @@ class Child extends Base {
 new Child();
 ```
 
-Explain the initialization boundary.
+Explain the result.
 
 ## Debug 3 — Virtual Dispatch During Construction
 
@@ -1223,7 +1156,7 @@ class Child extends Base {
 new Child();
 ```
 
-Find the lifecycle/design bug.
+Find the lifecycle bug.
 
 ## Debug 4 — Per-Instance Function
 
@@ -1238,24 +1171,23 @@ const b = new User();
 console.log(a.handler === b.handler);
 ```
 
-Explain the result and memory implication.
+Explain the result.
 
-## Debug 5 — Static Shared State
+## Debug 5 — Shared Static State
 
 ```js
 class Cache {
   static items = new Map();
 }
 
-const a = Cache.items;
-a.set("x", 1);
+Cache.items.set("x", 1);
 
 console.log(Cache.items.get("x"));
 ```
 
 Explain ownership and lifetime.
 
-# 51. Code Review Exercise
+# 41. Code Review Exercise
 
 Review:
 
@@ -1278,47 +1210,43 @@ class OrderService {
 Evaluate:
 
 ```text
-1. Which fields should be injected?
+1. Which state should be injected?
 2. Which initialization is hidden?
-3. Which operations can throw?
+3. What can throw?
 4. Is construction still cheap?
-5. What is the lifecycle of database?
+5. Who owns database?
 6. Who owns cache?
-7. Should load be asynchronous?
+7. Is load asynchronous?
 8. What invariant exists when construction returns?
-9. Would a factory/application startup workflow be clearer?
+9. Would a factory/startup workflow be clearer?
 ```
 
-# 52. Interview Questions
+# 42. Interview Questions
 
 ```text
 1. What is a class field?
-2. What is the difference between an instance field and a prototype method?
+2. Are public instance fields own properties?
 3. What is a static field?
 4. What is a private field?
-5. What is a static private field?
-6. Are class fields own properties?
-7. When are instance fields initialized?
-8. What is the difference between base and derived initialization?
-9. Why does super() matter?
-10. Why can field order matter?
-11. Can a field initializer call a method?
-12. What happens if a field initializer throws?
-13. Are derived fields available inside the base constructor?
-14. What is dangerous about constructor-time virtual dispatch?
-15. How are public fields overridden?
-16. Are private fields inherited like public properties?
-17. When should a field be private?
-18. When should a value be a constructor parameter instead of a field default?
-19. When should a field initializer not perform I/O?
-20. What is the trade-off of arrow-function fields?
-21. Why can static mutable fields behave like global state?
-22. How would you design initialization for a complex domain object?
+5. When are instance fields initialized?
+6. Why does field order matter?
+7. What is different about base and derived initialization?
+8. Why does super() matter?
+9. Can a base constructor safely read derived fields?
+10. Why is calling overridable methods from constructors risky?
+11. Where do prototype methods live?
+12. How are arrow-function fields different from prototype methods?
+13. What is private-field branding?
+14. How are static fields different from instance fields?
+15. Why can static mutable state behave like global state?
+16. Should field initializers perform I/O?
+17. When should state be a constructor parameter instead?
+18. How would you design a reliable initialization timeline?
 ```
 
-# 53. Predict-the-Output Exercises
+# 43. Predict-the-Output Exercises
 
-## Exercise A
+## A
 
 ```js
 class User {
@@ -1330,18 +1258,18 @@ class User {
 console.log(new User().full);
 ```
 
-## Exercise B
+## B
 
 ```js
 class User {
-  full = `${this.first}`;
+  full = this.first;
   first = "Milan";
 }
 
 console.log(new User().full);
 ```
 
-## Exercise C
+## C
 
 ```js
 class Base {
@@ -1359,7 +1287,7 @@ class Child extends Base {
 new Child();
 ```
 
-## Exercise D
+## D
 
 ```js
 class User {
@@ -1374,7 +1302,7 @@ console.log(a.handler === b.handler);
 console.log(a.method === b.method);
 ```
 
-## Exercise E
+## E
 
 ```js
 class Config {
@@ -1385,7 +1313,7 @@ class Config {
 console.log(Config.label);
 ```
 
-## Exercise F
+## F
 
 ```js
 class Base {
@@ -1407,23 +1335,23 @@ class Child extends Base {
 new Child();
 ```
 
-# 54. Mastery Exercises
+# 44. Mastery Exercises
 
 ## Level 1 — Understand
 
 Explain:
 
 ```text
-public field
-private field
+instance field
 static field
+private field
 static private field
 field initializer
 ```
 
 ## Level 2 — Explain
 
-Draw initialization for `Base` and `Child extends Base`, including base fields, base constructor, derived fields, and derived constructor.
+Draw initialization for Base and Child, marking base fields, base constructor, derived fields, and derived constructor.
 
 ## Level 3 — Predict
 
@@ -1447,7 +1375,7 @@ validated domain object
 private-state class
 static registry
 closure equivalent
-initialization-order test cases
+field-order tests
 ```
 
 ## Level 5 — Debug
@@ -1456,26 +1384,15 @@ Fix:
 
 ```text
 late field dependency
-derived-field access from base constructor
+base reads derived state
 constructor virtual dispatch
-unnecessary per-instance functions
+per-instance function duplication
 hidden static state
 ```
 
 ## Level 6 — Apply
 
-Design an `Order` with:
-
-```text
-id
-items
-status
-createdAt
-private totals
-derived display data
-```
-
-and document the initialization order.
+Design an `Order` using required inputs, defaults, validated fields, derived state, and private totals.
 
 ## Level 7 — Compare
 
@@ -1493,7 +1410,7 @@ static field
 
 Answer:
 
-> Why is initialization order a design concern rather than merely a language-detail concern?
+> Why is initialization order a design concern rather than merely a language detail?
 
 Connect:
 
@@ -1507,32 +1424,28 @@ testability
 LLD
 ```
 
-# 55. Key Takeaways
+# 45. Key Takeaways
 
 ```text
 1. Instance fields create per-instance state.
 2. Static fields create class-level state.
-3. Private fields use private-name semantics rather than ordinary string keys.
-4. Instance fields are separate from prototype methods.
-5. Field initializers execute during construction/evaluation according to class semantics.
+3. Private fields use private-name semantics.
+4. Public instance fields are separate from prototype methods.
+5. Field initializers execute as part of initialization.
 6. Field order can affect observable behavior.
-7. Base and derived classes have different initialization sequencing.
-8. Derived constructors require superclass initialization before normal this use.
-9. Base constructors should not assume derived fields are initialized.
-10. Calling overridable methods during construction can expose partial state.
-11. Field initializers can execute arbitrary expressions and can throw.
-12. Large/default allocations in fields can create memory costs.
-13. Arrow-function fields are per-instance function values.
-14. Static mutable state can behave like a hidden global.
-15. Private state improves encapsulation but is not a security system.
-16. Constructor assignment and field syntax can express similar state but have different initialization semantics.
-17. Initialization should be designed around invariants and lifecycle.
-18. Complex initialization may belong in factories or application workflows.
-19. Public fields are part of the external object surface.
-20. Understanding initialization order is essential for safe inheritance design.
+7. Base and derived initialization are different.
+8. Derived constructors have a super()/this boundary.
+9. Base constructors cannot assume derived fields are initialized.
+10. Constructor-time virtual dispatch can expose partial state.
+11. Arrow-function fields are per-instance functions.
+12. Static mutable state can behave like hidden global state.
+13. Private state improves encapsulation but is not security isolation.
+14. Constructors and fields complement each other.
+15. Initialization should be designed around invariants and lifecycle.
+16. Complex initialization may belong in factories/workflows.
 ```
 
-# 56. Concept Connections
+# 46. Concept Connections
 
 ## Depends On
 
@@ -1557,19 +1470,19 @@ Chapter 8 — Abstraction
 Chapter 9 — Inheritance
 Chapter 10 — Polymorphism
 Chapter 11 — Composition
-Chapter 17 — Cohesion & Coupling
+cohesion
+coupling
 GRASP
 SOLID
-TypeScript class design
+TypeScript OOP
 dependency injection
-object lifecycle
 domain invariants
 ```
 
 ## Related Concepts
 
 ```text
-constructor initialization
+constructors
 factories
 builders
 dependency injection
@@ -1581,19 +1494,9 @@ polymorphism
 
 ## Why This Chapter Matters
 
-Most object design assumes the object is already initialized. Real failures often happen before that point.
+The rest of OOP assumes objects can be trusted after construction. Initialization semantics determine whether state, dependencies, private data, and invariants exist when expected.
 
-Initialization semantics determine whether:
-
-```text
-the object is valid
-the dependencies exist
-the private state exists
-the invariants hold
-the subclass is safe
-```
-
-# 57. Completion Criteria
+# 47. Completion Criteria
 
 Mark:
 
@@ -1601,7 +1504,16 @@ Mark:
 [+] Completed
 ```
 
-when you can explain each field type, trace base/derived initialization, explain field order, explain private-field initialization, and debug constructor/field interaction.
+when you can:
+
+```text
+explain every field kind
+trace base initialization
+trace derived initialization
+explain field ordering
+explain private state initialization
+debug constructor/field interaction
+```
 
 Mark:
 
@@ -1609,21 +1521,20 @@ Mark:
 [*] Mastered
 ```
 
-when you can look at an unfamiliar class hierarchy and answer:
+when you can inspect unfamiliar classes and determine:
 
 ```text
-what state exists at each point in construction
-which fields are initialized
+what state exists at each construction step
 which methods are safe to call
-which invariants are temporarily violated
+which invariants are temporarily absent
 which side effects can occur
 ```
 
-without executing the program.
+without executing the code.
 
 Reading alone does not mark mastery.
 
-# 58. Revision / Retrieval Record
+# 48. Revision / Retrieval Record
 
 ```md
 # Chapter 6 — Revision / Retrieval Record
@@ -1635,35 +1546,32 @@ Reading alone does not mark mastery.
 - Status after:
 
 ## Fields
-- Public instance:
+- Instance:
 - Static:
 - Private:
 - Static private:
 
 ## Initialization
-- What happens for a base class?
-- What happens for a derived class?
-- Why does super matter?
+- Base order:
+- Derived order:
+- Why is super important?
 
 ## Ordering
-- Which field depends on another?
+- Which initializers depend on earlier fields?
 - Did declaration order matter?
 
-## Private State
-- When does private state become available?
-- What happens with the wrong receiver?
-
 ## Inheritance
-- Can the base constructor access derived fields?
-- What happens with virtual dispatch?
+- Can Base read derived state?
+- What can virtual dispatch expose?
 
 ## Performance
-- Which fields allocate per instance?
-- Are any field functions unnecessarily duplicated?
+- Which state allocates per instance?
+- Are any functions unnecessarily duplicated?
 
 ## Design
-- Which initialization belongs in the constructor?
-- Which belongs in a factory/workflow?
+- What belongs in a field?
+- What belongs in a constructor?
+- What belongs in a factory/workflow?
 
 ## Weak Areas
 -
@@ -1684,7 +1592,7 @@ Reading alone does not mark mastery.
 -
 ```
 
-# 59. Canonical References and Source Discipline
+# 49. Canonical References and Source Discipline
 
 Primary source:
 
@@ -1712,7 +1620,7 @@ https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/extend
 Source discipline:
 
 ```text
-field semantics
+language semantics
 → ECMAScript
 
 standard API behavior
@@ -1725,7 +1633,7 @@ initialization design
 → domain/application requirements
 ```
 
-# 60. Completion Snapshot
+# 50. Completion Snapshot
 
 ```text
 Chapter: 006
@@ -1747,17 +1655,15 @@ Overall: [ ] Not Started
 For a base class:
 
 ```text
-class definition
-      ↓
-class elements established
+class evaluation
       ↓
 new
       ↓
 instance created
       ↓
-instance fields initialize
+base fields initialize
       ↓
-constructor body
+base constructor body
       ↓
 ready instance
 ```
@@ -1773,11 +1679,11 @@ base initialization
       ↓
 base constructor
       ↓
-derived instance fields
+derived fields
       ↓
 derived constructor body
       ↓
-ready instance
+ready object
 ```
 
 For class-level state:
@@ -1785,7 +1691,7 @@ For class-level state:
 ```text
 class evaluation
       ↓
-static fields / private static state
+static fields/private static state
       ↓
 class ready
 ```
@@ -1794,45 +1700,44 @@ Always ask:
 
 ```text
 1. Which fields exist right now?
-2. Which field initializers have run?
-3. Is this a base or derived construction?
-4. Has super() completed where required?
-5. Can this method observe partially initialized state?
+2. Which initializers have run?
+3. Is this base or derived construction?
+4. Has the super boundary been crossed?
+5. Can a method observe partial state?
 6. Which work happens per instance?
-7. Which state is shared across all instances?
-8. Which state is actually private?
+7. Which state is shared?
+8. Which state is private?
 9. Are field initializers doing too much?
-10. What invariant must hold when construction finishes?
+10. What invariant must hold when construction completes?
 ```
 
 # Principal Design Principle
 
-> **A well-designed object should have a deliberate initialization timeline: know exactly which state exists at every lifecycle step, and ensure no externally meaningful object escapes in an invalid state.**
+> **Design the initialization timeline deliberately: an object should become valid in a predictable sequence, and externally meaningful code should not have to guess which state exists.**
 
 # Track Mapping
 
 ```text
 Track A — Core Theory
     class fields
-    public/private state
-    static state
+    private/static state
     class evaluation
-    initialization ordering
-    base vs derived construction
+    field ordering
+    base/derived initialization
     private branding
 
 Track B — Implementation
-    field/constructor translations
-    private-state alternatives
+    field-to-constructor translation
+    closure private state
     static registries
-    initialization-order tooling
-    lifecycle-safe domain objects
+    initialization analysis
+    lifecycle-safe objects
 
 Track C — Interview / Reasoning
     field ordering
     super timing
-    base/derived state
+    base/derived reasoning
     constructor virtual dispatch
-    per-instance function allocation
-    initialization design judgment
+    per-instance allocation
+    initialization trade-offs
 ```
