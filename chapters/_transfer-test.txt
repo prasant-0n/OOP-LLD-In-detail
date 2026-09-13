@@ -1,0 +1,1 @@
+/mnt/data/chapter-022-interface-segregation-principle-and-capability-focused-contracts.md
